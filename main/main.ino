@@ -8,9 +8,9 @@
 // ==========================================
 // 1. CONFIGURACIÓN DE USUARIO
 // ==========================================
-const char* ssid = "iPhone";
-const char* password = "chelu1234";
-const char* mqtt_server = "172.20.10.5";
+const char* ssid = "iPhone de Rafa (2)";
+const char* password = "chelu1234"; // <--- VERIFICAR CONTRASEÑA
+const char* mqtt_server = "172.20.10.4";
 const int mqtt_port = 1883;
 const char* mqtt_topic = "sensores/clima";
 
