@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Docker / Data volumes
+mosquitto/data/
+mosquitto/log/
+nodered_data/
+mimir_data/
+grafana-storage/
+
+# Python / Notebooks
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+
+# Arduino builds
+build/

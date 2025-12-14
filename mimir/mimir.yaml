@@ -1,0 +1,29 @@
+# CAMBIA ESTO DE true A false
+multitenancy_enabled: false 
+
+server:
+  http_listen_port: 9009
+
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/ingester
+
+ingester:
+  ring:
+    replication_factor: 1
+
+distributor:
+  ring:
+    kvstore:
+      store: memberlist
+
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+
+compactor:
+  data_dir: /data/compactor
+  sharding_ring:
+    kvstore:
+      store: memberlist

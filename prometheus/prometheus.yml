@@ -1,0 +1,14 @@
+
+global:
+  scrape_interval: 5s # Cada cuánto lee datos
+
+scrape_configs:
+  # Se monitorea a sí mismo
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Si estás usando el mqtt-exporter (la parte del profe)
+  - job_name: 'mqtt-exporter'
+    static_configs:
+      - targets: ['mqtt-exporter:9000']

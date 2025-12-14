@@ -1,0 +1,72 @@
+version: '3'
+
+services:
+  # 1. BROKER MQTT
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18
+    container_name: mosquitto
+    restart: always
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+    networks:
+      - backend
+
+  # 2. MIMIR (Sustituye a Prometheus)
+  mimir:
+      image: grafana/mimir:latest
+      container_name: mimir
+      restart: always
+      ports:
+        - "9009:9009"
+      # Comando básico para que arranque sin quejarse
+      command: ["-config.file=/etc/mimir.yaml"]
+      # ESTO ES LO NUEVO: Forzamos la configuración por variables de entorno
+      environment:
+        - MIMIR_INGESTER_RING_REPLICATION_FACTOR=1
+        - MIMIR_LIMITS_OUT_OF_ORDER_TIME_WINDOW=2h
+      volumes:
+        - ./mimir/mimir.yaml:/etc/mimir.yaml
+        - mimir_data:/data
+      networks:
+        - backend
+
+  # 3. TELEGRAF (Sustituye a mqtt-exporter)
+  telegraf:
+    image: telegraf:latest
+    container_name: telegraf
+    restart: always
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    depends_on:
+      - mosquitto
+      - mimir
+    networks:
+      - backend
+
+  # 4. GRAFANA
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - mimir
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  mimir_data:
+  grafana-storage:

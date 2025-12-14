@@ -1,0 +1,69 @@
+version: '3'
+
+services:
+  # 1. BROKER MQTT
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18
+    container_name: mosquitto
+    restart: always
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+    networks:
+      - backend
+
+  # 2. GRAFANA MIMIR (El "Prometheus" potente)
+  mimir:
+    image: grafana/mimir:latest
+    container_name: mimir
+    restart: always
+    ports:
+      - "9009:9009"
+    # Le pasamos el archivo de configuración customizado
+    command: ["-config.file=/etc/mimir.yaml"]
+    volumes:
+      - ./mimir/mimir.yaml:/etc/mimir.yaml
+      - mimir_data:/data
+    networks:
+      - backend
+
+  # 3. TELEGRAF (El Agente que extrae tu hora 'ts')
+  telegraf:
+    image: telegraf:latest
+    container_name: telegraf
+    restart: always
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    depends_on:
+      - mosquitto
+      - mimir
+    networks:
+      - backend
+
+  # 4. GRAFANA (Visualización)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      # Permitir acceso anónimo para no liarte con logins ahora
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - mimir
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  mimir_data:
+  grafana-storage:
