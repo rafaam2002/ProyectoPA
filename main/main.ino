@@ -8,7 +8,7 @@
 // ==========================================
 // 1. CONFIGURACIÓN DE USUARIO
 // ==========================================
-const char* ssid = "DIGIFIBRA-PLUS-5HQ3";
+const char* ssid = "DIGIFIBRA-5HQ3";
 const char* password = "s2UHCFeDcG"; // <--- NO OLVIDES PONER LA CONTRASEÑA DE CASA
 const char* mqtt_server = "192.168.1.146";
 const int mqtt_port = 1883;
@@ -139,6 +139,27 @@ void setup() {
   display.setFont(u8x8_font_chroma48medium8_r);
   display.clearDisplay();
   display.drawString(0, 0, "ARRANCANDO...");
+
+  // ESCÁNER DE REDES
+  Serial.println("Escaneando redes WiFi...");
+  int n = WiFi.scanNetworks();
+  Serial.println("Escaneo terminado");
+  if (n == 0) {
+      Serial.println("NO se encontraron redes");
+  } else {
+      Serial.print(n);
+      Serial.println(" redes encontradas:");
+      for (int i = 0; i < n; ++i) {
+          // Imprimimos SSID y la intensidad de señal (RSSI)
+          Serial.print(i + 1);
+          Serial.print(": ");
+          Serial.print(WiFi.SSID(i));
+          Serial.print(" (");
+          Serial.print(WiFi.RSSI(i));
+          Serial.println(")");
+          delay(10);
+      }
+  }
 
   conectarWiFi();
 
