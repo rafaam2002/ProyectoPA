@@ -4,14 +4,15 @@
 #include <U8x8lib.h>
 #include "time.h"
 #include <vector>
+#include "secrets.h" // Importar credenciales secretas
 
 // ==========================================
 // 1. CONFIGURACIÓN DE USUARIO
 // ==========================================
-const char* ssid = "DIGIFIBRA-5HQ3";
-const char* password = "s2UHCFeDcG"; // <--- NO OLVIDES PONER LA CONTRASEÑA DE CASA
-const char* mqtt_server = "192.168.1.146";
-const int mqtt_port = 1883;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
+const char* mqtt_server = MQTT_SERVER;
+const int mqtt_port = MQTT_PORT;
 const char* mqtt_topic = "sensores/clima";
 
 const char* ntpServer = "pool.ntp.org";
