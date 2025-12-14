@@ -8,9 +8,9 @@
 // ==========================================
 // 1. CONFIGURACIÓN DE USUARIO
 // ==========================================
-const char* ssid = "iPhone de Rafa (2)";
-const char* password = "chelu1234"; // <--- VERIFICAR CONTRASEÑA
-const char* mqtt_server = "172.20.10.4";
+const char* ssid = "DIGIFIBRA-PLUS-5HQ3";
+const char* password = "s2UHCFeDcG"; // <--- NO OLVIDES PONER LA CONTRASEÑA DE CASA
+const char* mqtt_server = "192.168.1.146";
 const int mqtt_port = 1883;
 const char* mqtt_topic = "sensores/clima";
 
@@ -71,14 +71,43 @@ bool leerHIH(float& t, float& h) {
 void conectarWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
 
-  display.drawString(0, 0, "WiFi Lost...");
-  WiFi.disconnect();
+  display.clearDisplay(); // Limpiar pantalla para mensajes claros
+  display.drawString(0, 0, "Conectando WiFi");
+  display.drawString(0, 1, ssid);
+  
+  Serial.print("Conectando a: ");
+  Serial.println(ssid);
+  
+  WiFi.mode(WIFI_STA); // Asegurar modo estación
+  WiFi.disconnect();   // Desconectar limpio
+  delay(100);
   WiFi.begin(ssid, password);
 
   int i = 0;
-  while (WiFi.status() != WL_CONNECTED && i < 10) {
-    delay(100);
+  while (WiFi.status() != WL_CONNECTED && i < 20) { // 20 intentos de 500ms = 10s
+    delay(500);
+    Serial.print(".");
+    char buf[16];
+    sprintf(buf, "Intento %d/20", i+1);
+    display.drawString(0, 2, buf);
     i++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    display.drawString(0, 3, "Conectado!");
+    display.drawString(0, 4, WiFi.localIP().toString().c_str());
+    Serial.println("\nWiFi Conectado!");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+    delay(2000); // Para poder leer la IP
+  } else {
+    display.drawString(0, 3, "Fallo WiFi");
+    char bufErr[16];
+    sprintf(bufErr, "ErrCode: %d", WiFi.status());
+    display.drawString(0, 4, bufErr);
+    Serial.print("\nFallo conexion. Code: ");
+    Serial.println(WiFi.status());
+    delay(2000);
   }
 }
 
