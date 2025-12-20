@@ -225,18 +225,22 @@ void loop() {
 
         // A) VACIAR BUFFER (Solo si tenemos hora válida, para no enviar basura histórica)
         if (horaEsValida && !bufferOffline.empty()) {
-          display.drawString(0, 6, "Subiendo Buff...");
-          
-          // ESPERA DE SEGURIDAD (5s) para que Telegraf se reconecte y suscriba
-          // Evita que enviemos datos a un broker vacío (Race Condition)
-          char waitBuf[16];
-          for(int w=5; w>0; w--) {
-             sprintf(waitBuf, "Espere... %d", w);
+          // ESPERA DE SEGURIDAD (60s) pedida por el usuario
+          // Race Condition Extreme Test
+          Serial.println("ESPERANDO 60s para estabilidad del sistema...");
+          char waitBuf[20];
+          for(int w=60; w>0; w--) {
+             snprintf(waitBuf, sizeof(waitBuf), "Wait Backend... %d", w);
              display.drawString(0, 7, waitBuf);
+             Serial.print("Wait... "); Serial.println(w);
              delay(1000);
-             client.loop(); // Mantener vivo el ping MQTT
+             client.loop(); // ¡VITAL! Mantener el ping
           }
           display.clearLine(7);
+          display.drawString(0, 6, "Subiendo Buff...");
+          
+          Serial.print("INTENTANDO SUBIR BUFFER. TAMAÑO: ");
+          Serial.println(bufferOffline.size());
 
           auto it = bufferOffline.begin();
           while (it != bufferOffline.end()) {
@@ -247,10 +251,15 @@ void loop() {
                      "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
                      it->temp, it->hum, (unsigned long)it->timestamp);
 
+            Serial.print("Enviando Hist: ");
+            Serial.print(jsonHist);
+
             if (client.publish(mqtt_topic, jsonHist)) {
+              Serial.println(" -> OK");
               it = bufferOffline.erase(it);
               delay(50);
             } else {
+              Serial.println(" -> FAIL (Break)");
               break;
             }
           }
@@ -288,6 +297,9 @@ void loop() {
           if (bufferOffline.size() < MAX_BUFFER) {
             DatoClima dato = { temp, hum, now };
             bufferOffline.push_back(dato);
+            
+            Serial.print("OFFLINE DETECTADO. Añadido al buffer. Size: ");
+            Serial.println(bufferOffline.size());
 
             char bufInfo[20];
             snprintf(bufInfo, sizeof(bufInfo), "Buff: %d", bufferOffline.size());

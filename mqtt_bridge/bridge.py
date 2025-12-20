@@ -170,6 +170,11 @@ def on_message(client, userdata, msg):
         ts_sec = int(data.get('ts', time.time()))
         ts_ms = ts_sec * 1000 
         
+        # DEBUG TIMESTAMP
+        now_ms = int(time.time() * 1000)
+        diff_ms = now_ms - ts_ms
+        print(f"DEBUG: RX TS={ts_ms} NOW={now_ms} DIFF={diff_ms}ms ({diff_ms/1000}s hold)")
+        
         send_to_mimir_manual(temp, hum, ts_ms)
 
     except Exception as e:
