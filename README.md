@@ -32,6 +32,11 @@ Para detener y eliminar los contenedores (los datos se conservan):
 sudo docker compose down
 ```
 
+### 4. Parar borrar datos de sensores
+```bash
+sudo docker volume rm proyectofinal_mimir_data
+```
+
 ## 🌐 Servicios y Puertos
 
 Una vez arrancado el sistema, puedes acceder a los siguientes servicios:

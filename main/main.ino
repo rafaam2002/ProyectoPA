@@ -194,7 +194,7 @@ void loop() {
     else Serial.println("Hora NO sincronizada (1970)");
   }
 
-  if (millis() - lastMeasure > 5000) {
+  if (millis() - lastMeasure > 1000) {
     lastMeasure = millis();
 
     float temp = 0;
@@ -226,6 +226,17 @@ void loop() {
         // A) VACIAR BUFFER (Solo si tenemos hora válida, para no enviar basura histórica)
         if (horaEsValida && !bufferOffline.empty()) {
           display.drawString(0, 6, "Subiendo Buff...");
+          
+          // ESPERA DE SEGURIDAD (5s) para que Telegraf se reconecte y suscriba
+          // Evita que enviemos datos a un broker vacío (Race Condition)
+          char waitBuf[16];
+          for(int w=5; w>0; w--) {
+             sprintf(waitBuf, "Espere... %d", w);
+             display.drawString(0, 7, waitBuf);
+             delay(1000);
+             client.loop(); // Mantener vivo el ping MQTT
+          }
+          display.clearLine(7);
 
           auto it = bufferOffline.begin();
           while (it != bufferOffline.end()) {

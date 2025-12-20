@@ -33,13 +33,15 @@ services:
       networks:
         - backend
 
-  # 3. TELEGRAF (Sustituye a mqtt-exporter)
-  telegraf:
-    image: telegraf:latest
-    container_name: telegraf
+  # 3. MQTT BRIDGE (Python Script Customizado)
+  mqtt-bridge:
+    build: ./mqtt_bridge
+    container_name: mqtt-bridge
     restart: always
-    volumes:
-      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    environment:
+      - MQTT_BROKER=mosquitto
+      - MQTT_TOPIC=sensores/clima
+      - MIMIR_URL=http://mimir:9009/api/v1/push
     depends_on:
       - mosquitto
       - mimir
