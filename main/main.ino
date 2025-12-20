@@ -38,8 +38,12 @@ const int MAX_BUFFER = 2000;
 
 unsigned long lastMeasure = 0;
 
+// Variables para lógica no bloqueante
+unsigned long reconnectTime = 0;
+bool esperandoBackend = false;
+
 // ==========================================
-// 3. FUNCIONES AUXILIARES (INTOCABLES PERO ROBUSTAS)
+// 3. FUNCIONES AUXILIARES
 // ==========================================
 
 bool leerHIH(float& t, float& h) {
@@ -72,20 +76,20 @@ bool leerHIH(float& t, float& h) {
 void conectarWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
 
-  display.clearDisplay(); // Limpiar pantalla para mensajes claros
+  display.clearDisplay(); 
   display.drawString(0, 0, "Conectando WiFi");
   display.drawString(0, 1, ssid);
   
   Serial.print("Conectando a: ");
   Serial.println(ssid);
   
-  WiFi.mode(WIFI_STA); // Asegurar modo estación
-  WiFi.disconnect();   // Desconectar limpio
+  WiFi.mode(WIFI_STA); 
+  WiFi.disconnect();   
   delay(100);
   WiFi.begin(ssid, password);
 
   int i = 0;
-  while (WiFi.status() != WL_CONNECTED && i < 20) { // 20 intentos de 500ms = 10s
+  while (WiFi.status() != WL_CONNECTED && i < 20) { 
     delay(500);
     Serial.print(".");
     char buf[16];
@@ -100,7 +104,7 @@ void conectarWiFi() {
     Serial.println("\nWiFi Conectado!");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
-    delay(2000); // Para poder leer la IP
+    delay(2000); 
   } else {
     display.drawString(0, 3, "Fallo WiFi");
     char bufErr[16];
@@ -115,11 +119,9 @@ void conectarWiFi() {
 void reconectarMQTT() {
   if (!espClient.connected()) {
     if (WiFi.status() == WL_CONNECTED) {
-      // ID aleatorio para evitar conflictos
       String clientId = "ESP32_HIH_" + String(random(0xffff), HEX);
       if (client.connect(clientId.c_str())) {
         display.drawString(0, 1, "MQTT OK     ");
-        // Re-suscripción si fuera necesario iría aquí
       } else {
         char bufErr[16];
         sprintf(bufErr, "MQTT Err:%d", client.state());
@@ -141,30 +143,17 @@ void setup() {
   display.clearDisplay();
   display.drawString(0, 0, "ARRANCANDO...");
 
-  // ESCÁNER DE REDES
   Serial.println("Escaneando redes WiFi...");
   int n = WiFi.scanNetworks();
-  Serial.println("Escaneo terminado");
   if (n == 0) {
       Serial.println("NO se encontraron redes");
   } else {
       Serial.print(n);
-      Serial.println(" redes encontradas:");
-      for (int i = 0; i < n; ++i) {
-          // Imprimimos SSID y la intensidad de señal (RSSI)
-          Serial.print(i + 1);
-          Serial.print(": ");
-          Serial.print(WiFi.SSID(i));
-          Serial.print(" (");
-          Serial.print(WiFi.RSSI(i));
-          Serial.println(")");
-          delay(10);
-      }
+      Serial.println(" redes encontradas");
   }
 
   conectarWiFi();
 
-  // Configuración de hora más agresiva para España/Europa
   configTime(3600, 3600, ntpServer);
   display.drawString(0, 2, "Sync Hora...");
 
@@ -178,22 +167,29 @@ void loop() {
   conectarWiFi();
 
   if (WiFi.status() == WL_CONNECTED) {
-    if (!client.connected()) reconectarMQTT();
+    if (!client.connected()) {
+       reconectarMQTT();
+       // Al reconectar, iniciamos el timer de espera de seguridad
+       if (client.connected()) { 
+           reconnectTime = millis();
+           esperandoBackend = true;
+           Serial.println("MQTT RECONECTADO. Iniciando espera de 60s...");
+       }
+    }
     client.loop();
   }
 
   time_t now;
   time(&now);
 
-  // Validación de hora (Año > 2023)
   bool horaEsValida = (now > 1700000000);
 
-  // Debug rápido de hora en Serial por si acaso
   if (millis() % 10000 == 0) {
     if (horaEsValida) Serial.printf("Hora OK: %lu\n", (unsigned long)now);
     else Serial.println("Hora NO sincronizada (1970)");
   }
 
+  // BUCLE DE MEDICIÓN CADA 1000ms
   if (millis() - lastMeasure > 1000) {
     lastMeasure = millis();
 
@@ -201,125 +197,146 @@ void loop() {
     float hum = 0;
     bool lecturaOk = leerHIH(temp, hum);
 
-    display.clearLine(4);
-    display.clearLine(5);
-    display.clearLine(6);
-    display.clearLine(7);
+    display.clear(); // Usamos clear() en lugar de clearLine() para evitar residuos
+    display.setFont(u8x8_font_chroma48medium8_r);
+    
+    // Titulo Fijo
+    // display.drawString(0,0, "MONITOR CLIMA"); 
 
     if (lecturaOk) {
+      // 1. Mostrar Lectura Actual
       char buf[20];
-      snprintf(buf, sizeof(buf), "T: %.1f H: %.0f", temp, hum);
-      display.drawString(0, 4, buf);
+      snprintf(buf, sizeof(buf), "T:%.1f H:%.0f", temp, hum);
+      display.drawString(0, 0, buf);
 
-      // ARREGLO 1: Visualizar estado NTP en pantalla
       if (horaEsValida) {
-        snprintf(buf, sizeof(buf), "TS: %lu", (unsigned long)now);
-        display.drawString(0, 5, buf);
+        snprintf(buf, sizeof(buf), "TS:%lu", (unsigned long)now);
+        display.drawString(0, 1, buf);
       } else {
-        display.drawString(0, 5, "TS: --NTP--");  // Aviso visual
+        display.drawString(0, 1, "TS: --NTP--");
       }
 
-      // --- LÓGICA DE ENVÍO BLINDADA ---
+      // --- LÓGICA DE CONTROL ---
+      
+      bool hayConexion = (WiFi.status() == WL_CONNECTED && client.connected());
 
-      if (WiFi.status() == WL_CONNECTED && client.connected()) {
-
-        // A) VACIAR BUFFER (Solo si tenemos hora válida, para no enviar basura histórica)
-        if (horaEsValida && !bufferOffline.empty()) {
-          // ESPERA DE SEGURIDAD (60s) pedida por el usuario
-          // Race Condition Extreme Test
-          Serial.println("ESPERANDO 60s para estabilidad del sistema...");
-          char waitBuf[20];
-          for(int w=60; w>0; w--) {
-             snprintf(waitBuf, sizeof(waitBuf), "Wait Backend... %d", w);
-             display.drawString(0, 7, waitBuf);
-             Serial.print("Wait... "); Serial.println(w);
-             delay(1000);
-             client.loop(); // ¡VITAL! Mantener el ping
-          }
-          display.clearLine(7);
-          display.drawString(0, 6, "Subiendo Buff...");
+      if (hayConexion) {
           
-          Serial.print("INTENTANDO SUBIR BUFFER. TAMAÑO: ");
-          Serial.println(bufferOffline.size());
+          if (esperandoBackend) {
+              // *** MODO ESPERA (Safety Wait 30s) ***
+              unsigned long elapsed = millis() - reconnectTime;
+              long remaining = 30000 - elapsed; // 30s
 
-          auto it = bufferOffline.begin();
-          while (it != bufferOffline.end()) {
-            char jsonHist[200];
-            
-            // >>> CAMBIO 1: Eliminado "tipo":"hist" para unificar la gráfica <<<
-            snprintf(jsonHist, sizeof(jsonHist),
-                     "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
-                     it->temp, it->hum, (unsigned long)it->timestamp);
+              if (remaining > 0) {
+                  // Aún esperando: SEGUIMOS GUARDANDO EN BUFFER
+                  if (horaEsValida) {
+                      if (bufferOffline.size() < MAX_BUFFER) {
+                          DatoClima dato = { temp, hum, now };
+                          bufferOffline.push_back(dato);
+                          display.drawString(0, 7, "Save: OK"); // Visual feedback
+                      } else {
+                          display.drawString(0, 7, "Save: FULL");
+                      }
+                  } else {
+                      display.drawString(0, 7, "Save: NTP ERR"); // Diagnóstico clave
+                  }
+                  
+                  // Mostrar info espera
+                  char waitBuf[20];
+                  snprintf(waitBuf, sizeof(waitBuf), "Wait: %lds", remaining/1000);
+                  display.drawString(0, 4, waitBuf);
+                  
+                  snprintf(waitBuf, sizeof(waitBuf), "Buff: %d", bufferOffline.size());
+                  display.drawString(0, 5, waitBuf);
 
-            Serial.print("Enviando Hist: ");
-            Serial.print(jsonHist);
+              } else {
+                  // Tiempo cumplido
+                  esperandoBackend = false;
+                  Serial.println("ESPERA TERMINADA. Vaciando Buffer...");
+              }
 
-            if (client.publish(mqtt_topic, jsonHist)) {
-              Serial.println(" -> OK");
-              it = bufferOffline.erase(it);
-              delay(50);
-            } else {
-              Serial.println(" -> FAIL (Break)");
-              break;
-            }
+          } 
+          
+          if (!esperandoBackend) {
+              // *** MODO ONLINE NORMAL ***
+              
+              // A) VACIAR BUFFER
+              if (horaEsValida && !bufferOffline.empty()) {
+                  display.drawString(0, 3, "UPLOADING...");
+                  Serial.print("SUBIENDO BUFFER. Size: ");
+                  Serial.println(bufferOffline.size());
+                  
+                  // Enviamos bloques de 10 para no bloquear 
+                  int enviados = 0;
+                  auto it = bufferOffline.begin();
+                  while (it != bufferOffline.end() && enviados < 20) {
+                      char jsonHist[200];
+                      snprintf(jsonHist, sizeof(jsonHist),
+                               "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
+                               it->temp, it->hum, (unsigned long)it->timestamp);
+                      
+                      Serial.print("HIST TX: "); Serial.println(jsonHist);
+
+                      if (client.publish(mqtt_topic, jsonHist)) {
+                          it = bufferOffline.erase(it);
+                          delay(20); 
+                          enviados++;
+                      } else {
+                          Serial.println("FAIL TX HIST");
+                          break;
+                      }
+                  }
+                  
+                  char buffRest[20];
+                  snprintf(buffRest, sizeof(buffRest), "Left: %d", bufferOffline.size());
+                  display.drawString(0, 4, buffRest);
+
+              } else {
+                  display.clearLine(3);
+                  display.clearLine(4);
+              }
+
+              // B) ENVIAR DATO LIVE
+              char jsonLive[200];
+              if (horaEsValida) {
+                  snprintf(jsonLive, sizeof(jsonLive),
+                           "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
+                           temp, hum, (unsigned long)now);
+              } else {
+                  snprintf(jsonLive, sizeof(jsonLive),
+                           "{\"temp\":%.2f, \"hum\":%.2f}",
+                           temp, hum);
+              }
+              client.publish(mqtt_topic, jsonLive);
+              Serial.print("LIVE TX: "); Serial.println(jsonLive);
+              display.drawString(0, 7, ">> ENVIADO OK");
           }
-        }
-        display.clearLine(6);
 
-        // B) ENVIAR DATO ACTUAL (LIVE) - ¡¡LA CLAVE!!
-        char jsonLive[200];
-
-        if (horaEsValida) {
-          // Opción Ideal: Enviamos con timestamp
-          // >>> CAMBIO 2: Eliminado "tipo":"live" <<<
-          snprintf(jsonLive, sizeof(jsonLive),
-                   "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
-                   temp, hum, (unsigned long)now);
-        } else {
-          // ARREGLO 3: PLAN DE EMERGENCIA
-          // Si no hay hora NTP, enviamos SIN "ts".
-          // >>> CAMBIO 3: Eliminado "tipo" también aquí por consistencia <<<
-          snprintf(jsonLive, sizeof(jsonLive),
-                   "{\"temp\":%.2f, \"hum\":%.2f}",
-                   temp, hum);
-          Serial.println("WARN: Enviando sin TS (Fallo NTP)");
-        }
-
-        client.publish(mqtt_topic, jsonLive);
-        display.drawString(0, 7, ">> ENVIADO OK");
-        Serial.print("TX: ");
-        Serial.println(jsonLive);
-
-      }
-      // CASO OFFLINE (Solo guardar si tenemos hora fiable)
-      else {
-        if (horaEsValida) {
-          if (bufferOffline.size() < MAX_BUFFER) {
-            DatoClima dato = { temp, hum, now };
-            bufferOffline.push_back(dato);
-            
-            Serial.print("OFFLINE DETECTADO. Añadido al buffer. Size: ");
-            Serial.println(bufferOffline.size());
-
-            char bufInfo[20];
-            snprintf(bufInfo, sizeof(bufInfo), "Buff: %d", bufferOffline.size());
-            display.drawString(0, 6, "OFFLINE");
-            display.drawString(0, 7, bufInfo);
+      } else {
+          // *** MODO OFFLINE ***
+          if (horaEsValida) {
+              if (bufferOffline.size() < MAX_BUFFER) {
+                  DatoClima dato = { temp, hum, now };
+                  bufferOffline.push_back(dato);
+                  Serial.print("OFFLINE. Guardando. Size: ");
+                  Serial.println(bufferOffline.size());
+              } else {
+                  bufferOffline.erase(bufferOffline.begin());
+                  DatoClima dato = { temp, hum, now };
+                  bufferOffline.push_back(dato);
+                  Serial.println("Buff Full (Rotando)");
+              }
+              char buff[20];
+              snprintf(buff, sizeof(buff), "Buff: %d", bufferOffline.size());
+              display.drawString(0, 6, "OFFLINE");
+              display.drawString(0, 7, buff);
           } else {
-            bufferOffline.erase(bufferOffline.begin());
-            DatoClima dato = { temp, hum, now };
-            bufferOffline.push_back(dato);
-            display.drawString(0, 7, "Buff FULL");
+              display.drawString(0, 6, "NO HORA/RED");
           }
-        } else {
-          // Sin WiFi y sin Hora... estamos jodidos, solo mostramos en pantalla
-          display.drawString(0, 6, "NO WIFI/NO NTP");
-        }
       }
 
     } else {
       display.drawString(0, 4, "Err Sensor HIH");
-      display.drawString(0, 5, "Check Cables");
     }
   }
 }
