@@ -41,6 +41,7 @@ unsigned long lastMeasure = 0;
 // Variables para lógica no bloqueante
 unsigned long reconnectTime = 0;
 bool esperandoBackend = false;
+bool isFirstConnection = true;
 
 // ==========================================
 // 3. FUNCIONES AUXILIARES
@@ -171,9 +172,17 @@ void loop() {
        reconectarMQTT();
        // Al reconectar, iniciamos el timer de espera de seguridad
        if (client.connected()) { 
-           reconnectTime = millis();
-           esperandoBackend = true;
-           Serial.println("MQTT RECONECTADO. Iniciando espera de 60s...");
+           if (isFirstConnection) {
+              // Primera conexión (arranque): No esperamos
+              esperandoBackend = false;
+              isFirstConnection = false;
+              Serial.println("MQTT CONECTADO (Inicio). Sin espera.");
+           } else {
+              // Reconexión tras caída: Esperamos 30s
+              reconnectTime = millis();
+              esperandoBackend = true;
+              Serial.println("MQTT RECONECTADO. Iniciando espera de 30s...");
+           }
        }
     }
     client.loop();
