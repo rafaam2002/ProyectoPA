@@ -269,13 +269,26 @@ void loop() {
           if (!esperandoBackend) {
               // *** MODO ONLINE NORMAL ***
               
-              // A) VACIAR BUFFER
+              // ESTRATEGIA FIFO ESTRICTA:
+              // Si hay datos en el buffer, el dato "Live" de AHORA en realidad 
+              // es el ÚLTIMO del buffer. No debemos saltarnos la cola.
+              // Así evitamos enviar T=100 (Live) y luego intentar enviar T=50 (Buffer),
+              // lo cual Mimir rechazaría.
+              
               if (horaEsValida && !bufferOffline.empty()) {
-                  display.drawString(0, 3, "UPLOADING...");
-                  Serial.print("SUBIENDO BUFFER. Size: ");
+                  // 1. Encolamos el dato actual al final (si la lectura fue buena)
+                  if (lecturaOk) {
+                      if (bufferOffline.size() < MAX_BUFFER) {
+                          bufferOffline.push_back({temp, hum, now});
+                      }
+                      display.drawString(0, 0, "Mode: RECOVERING");
+                  }
+
+                  display.drawString(0, 5, "Subiendo...");
+                  Serial.print("BUFFER FLUSH. Size: ");
                   Serial.println(bufferOffline.size());
                   
-                  // Enviamos bloques de 10 para no bloquear 
+                  // Enviamos bloques (neto: -19 items por segundo)
                   int enviados = 0;
                   auto it = bufferOffline.begin();
                   while (it != bufferOffline.end() && enviados < 20) {
@@ -284,14 +297,15 @@ void loop() {
                                "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
                                it->temp, it->hum, (unsigned long)it->timestamp);
                       
-                      Serial.print("HIST TX: "); Serial.println(jsonHist);
+                      Serial.print("TX: "); Serial.print(jsonHist);
 
                       if (client.publish(mqtt_topic, jsonHist)) {
+                          Serial.println(" -> OK");
                           it = bufferOffline.erase(it);
-                          delay(20); 
+                          delay(25); // Un poco mas de pausa para estabilidad
                           enviados++;
                       } else {
-                          Serial.println("FAIL TX HIST");
+                          Serial.println(" -> FAIL");
                           break;
                       }
                   }
@@ -300,25 +314,32 @@ void loop() {
                   snprintf(buffRest, sizeof(buffRest), "Left: %d", bufferOffline.size());
                   display.drawString(0, 4, buffRest);
 
-              } else {
-                  display.clearLine(3);
-                  display.clearLine(4);
+              } 
+              else {
+                  // Buffer vacío: Comportamiento normal (Live directo)
+                  if (horaEsValida) {
+                      display.clearLine(5);
+                      display.clearLine(4);
+                  }
+
+                  char jsonLive[200];
+                  if (horaEsValida) {
+                      snprintf(jsonLive, sizeof(jsonLive),
+                               "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
+                               temp, hum, (unsigned long)now);
+                  } else {
+                      snprintf(jsonLive, sizeof(jsonLive),
+                               "{\"temp\":%.2f, \"hum\":%.2f}",
+                               temp, hum);
+                  }
+                  
+                  if (lecturaOk) { // Solo enviamos si sensor ok
+                    client.publish(mqtt_topic, jsonLive);
+                    Serial.print("LIVE TX: "); Serial.println(jsonLive);
+                    display.drawString(0, 7, ">> ENVIADO OK");
+                  }
               }
 
-              // B) ENVIAR DATO LIVE
-              char jsonLive[200];
-              if (horaEsValida) {
-                  snprintf(jsonLive, sizeof(jsonLive),
-                           "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
-                           temp, hum, (unsigned long)now);
-              } else {
-                  snprintf(jsonLive, sizeof(jsonLive),
-                           "{\"temp\":%.2f, \"hum\":%.2f}",
-                           temp, hum);
-              }
-              client.publish(mqtt_topic, jsonLive);
-              Serial.print("LIVE TX: "); Serial.println(jsonLive);
-              display.drawString(0, 7, ">> ENVIADO OK");
           }
 
       } else {
