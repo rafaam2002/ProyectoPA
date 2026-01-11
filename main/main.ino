@@ -268,75 +268,70 @@ void loop() {
           
           if (!esperandoBackend) {
               // *** MODO ONLINE NORMAL ***
+
+              // 1. ENVIAR DATO LIVE (Prioridad Absoluta)
+              // Lo enviamos YA para que el usuario vea que "está vivo" sin lag.
+              char jsonLive[200];
+              if (horaEsValida) {
+                  snprintf(jsonLive, sizeof(jsonLive),
+                           "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
+                           temp, hum, (unsigned long)now);
+              } else {
+                  snprintf(jsonLive, sizeof(jsonLive),
+                           "{\"temp\":%.2f, \"hum\":%.2f}",
+                           temp, hum);
+              }
               
-              // ESTRATEGIA FIFO ESTRICTA:
-              // Si hay datos en el buffer, el dato "Live" de AHORA en realidad 
-              // es el ÚLTIMO del buffer. No debemos saltarnos la cola.
-              // Así evitamos enviar T=100 (Live) y luego intentar enviar T=50 (Buffer),
-              // lo cual Mimir rechazaría.
+              if (lecturaOk) {
+                client.publish(mqtt_topic, jsonLive);
+                Serial.print("LIVE TX: "); Serial.println(jsonLive);
+                display.drawString(0, 0, ">> LIVE OK");
+              }
+
+              // 2. VACIAR BUFFER (Background Thread "Fake")
+              // Enviamos un poco de historia en cada ciclo.
+              // NO saturar al Bridge Python (que tarda ~100ms en hacer POST a Mimir).
+              // Si enviamos muy rápido, Mosquitto descarta y perdemos datos.
               
               if (horaEsValida && !bufferOffline.empty()) {
-                  // 1. Encolamos el dato actual al final (si la lectura fue buena)
-                  if (lecturaOk) {
-                      if (bufferOffline.size() < MAX_BUFFER) {
-                          bufferOffline.push_back({temp, hum, now});
-                      }
-                      display.drawString(0, 0, "Mode: RECOVERING");
-                  }
-
-                  display.drawString(0, 5, "Subiendo...");
-                  Serial.print("BUFFER FLUSH. Size: ");
-                  Serial.println(bufferOffline.size());
                   
-                  // Enviamos bloques (neto: -19 items por segundo)
+                  display.drawString(0, 5, "Syncing History...");
+                  char buffRest[20];
+                  snprintf(buffRest, sizeof(buffRest), "Pend: %d", bufferOffline.size());
+                  display.drawString(0, 4, buffRest);
+                  
+                  // Enviamos MAX 5 items por ciclo (5 items * 150ms = 750ms ocupado)
+                  // Nos deja 250ms libres para respirar antes del siguiente ciclo.
+                  int batchSize = 5;
                   int enviados = 0;
+                  
                   auto it = bufferOffline.begin();
-                  while (it != bufferOffline.end() && enviados < 20) {
+                  while (it != bufferOffline.end() && enviados < batchSize) {
                       char jsonHist[200];
                       snprintf(jsonHist, sizeof(jsonHist),
                                "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
                                it->temp, it->hum, (unsigned long)it->timestamp);
                       
-                      Serial.print("TX: "); Serial.print(jsonHist);
+                      Serial.print("HIST: "); Serial.print(jsonHist);
 
                       if (client.publish(mqtt_topic, jsonHist)) {
                           Serial.println(" -> OK");
-                          it = bufferOffline.erase(it);
-                          delay(25); // Un poco mas de pausa para estabilidad
+                          it = bufferOffline.erase(it); // Borramos ya
                           enviados++;
+                          // RETARDO CRÍTICO: Dar tiempo a Python para procesar el POST HTTP
+                          // Si bajamos de 100ms, el bridge colapsa con buffers grandes.
+                          delay(120); 
                       } else {
-                          Serial.println(" -> FAIL");
-                          break;
+                          Serial.println(" -> FAIL QUEUE");
+                          break; // Si falla el broker, paramos por hoy
                       }
                   }
-                  
-                  char buffRest[20];
-                  snprintf(buffRest, sizeof(buffRest), "Left: %d", bufferOffline.size());
-                  display.drawString(0, 4, buffRest);
 
               } 
               else {
-                  // Buffer vacío: Comportamiento normal (Live directo)
                   if (horaEsValida) {
                       display.clearLine(5);
                       display.clearLine(4);
-                  }
-
-                  char jsonLive[200];
-                  if (horaEsValida) {
-                      snprintf(jsonLive, sizeof(jsonLive),
-                               "{\"temp\":%.2f, \"hum\":%.2f, \"ts\":%lu}",
-                               temp, hum, (unsigned long)now);
-                  } else {
-                      snprintf(jsonLive, sizeof(jsonLive),
-                               "{\"temp\":%.2f, \"hum\":%.2f}",
-                               temp, hum);
-                  }
-                  
-                  if (lecturaOk) { // Solo enviamos si sensor ok
-                    client.publish(mqtt_topic, jsonLive);
-                    Serial.print("LIVE TX: "); Serial.println(jsonLive);
-                    display.drawString(0, 7, ">> ENVIADO OK");
                   }
               }
 
