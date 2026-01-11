@@ -1,55 +1,66 @@
-# Proyecto Final: Monitorización IoT con ESP32
+# Proyecto Final: Sistema IoT Resiliente con ESP32, MQTT y Mimir
 
-Este proyecto implementa un sistema completo de monitorización IoT ("Full Stack IoT"). Captura datos de temperatura y humedad mediante un ESP32 y los visualiza en tiempo real usando un stack de contenedores Docker.
+Este documento detalla la arquitectura, tecnologías y funcionalidades del sistema de monitorización ambiental desarrollado. El proyecto se centra en la **resilencia de datos** (no perder mediciones) y la **visualización histórica precisa** utilizando un stack moderno de contenedores.
 
-## 🚀 Arquitectura
+## 🚀 Tecnologías Clave
 
-*   **ESP32**: Lee sensores y envía datos vía MQTT.
-*   **Mosquitto**: Broker MQTT que recibe los mensajes.
-*   **Telegraf**: Agente que recoge datos de MQTT y los inserta en la base de datos.
-*   **Mimir**: Base de datos de series temporales (compatible con Prometheus).
-*   **Grafana**: Interfaz web para visualizar los datos.
+*   **ESP32 (C++/Arduino)**: Microcontrolador con lógica avanzada de buffering offline.
+*   **MQTT (Mosquitto)**: Protocolo ligero para transmisión de mensajería (Broker).
+*   **Python Bridge (Custom)**: Servicio intermedio desarrollado a medida para ingesta de datos. Reemplaza a Telegraf para garantizar el manejo correcto de timestamps históricos (Backfilling).
+*   **Prometheus Remote Write (Protobuf)**: Protocolo utilizado por el Bridge para enviar métricas eficientes.
+*   **Mimir (Grafana Labs)**: Base de datos de series temporales escalable y compatible con Prometheus.
+*   **Grafana**: Plataforma de visualización para dashboards y alertas.
+*   **Docker & Docker Compose**: Orquestación de contenedores para un despliegue replicable.
 
-## 🛠️ Despliegue con Docker
+## 🏛️ Arquitectura del Sistema
 
-Todos los servicios de backend se ejecutan mediante Docker Compose.
+1.  **Sensorización (Edge)**:
+    *   El ESP32 lee temperatura y humedad (Sensor HIH) cada segundo.
+    *   Sincroniza la hora vía **NTP** (necesario para marcar hitos de tiempo reales).
+    *   **Buffer Circular**: Si pierde conexión WiFi o MQTT, guarda los datos en RAM (`std::vector`).
+    *   **Lógica Anti-Race Condition**: Al reconectar, espera 30 segundos estables antes de volcar el buffer para asegurar que el backend está listo.
 
-### 1. Iniciar el sistema
-Para levantar todos los servicios, ejecuta en la raíz del proyecto:
+2.  **Transmisión**:
+    *   Protocolo MQTT sobre TCP/IP.
+    *   Topic: `sensores/clima`.
+    *   Payload JSON: `{"temp": 25.5, "hum": 40.2, "ts": 1700000000}`.
+
+3.  **Ingesta (Backend)**:
+    *   **Service: mqtt-bridge**: Script Python optimizado.
+    *   Escucha MQTT y decodifica el JSON.
+    *   Transforma los datos a **Protobuf** (formato binario de Prometheus).
+    *   Envía los datos a Mimir vía HTTP POST (`/api/v1/push`).
+    *   *Ventaja*: Permite inyectar datos con timestamps pasados (lo que fallaba con Telegraf).
+
+4.  **Almacenamiento y Visualización**:
+    *   **Mimir**: Recibe y almacena métricas con alta compresión. Soporta ingesta desordenada (out-of-order).
+    *   **Grafana**: Consulta Mimir usando PromQL (`clima_temp`, `clima_hum`) y grafica los resultados.
+
+## 🛠️ Instrucciones de Despliegue
+
+### 1. Backend (Servidor)
+Ejecutar en la raíz del proyecto (requiere Docker):
 ```bash
-sudo docker compose up -d
+sudo docker compose up -d --build
 ```
+*   **Grafana**: [http://localhost:3000](http://localhost:3000) (Usuario/Pass: `admin` / `admin`)
+*   **Logs Bridge**: `sudo docker logs mqtt-bridge -f`
 
-### 2. Verificar estado
-Para ver si todo está corriendo correctamente:
-```bash
-sudo docker compose ps
-```
+### 2. ESP32 (Dispositivo)
+1.  Abrir `main/main.ino` con Arduino IDE o VS Code (PlatformIO).
+2.  Renombrar y configurar `main/secrets.h` con tu WiFi.
+3.  Subir el código.
 
-### 3. Parar el sistema
-Para detener y eliminar los contenedores (los datos se conservan):
-```bash
-sudo docker compose down
-```
+## 🧪 Pruebas de Resiliencia (Demo)
 
-### 4. Parar borrar datos de sensores
-```bash
-sudo docker volume rm proyectofinal_mimir_data
-```
+El sistema soporta desconexiones de red sin perder datos ("Huecos" en la gráfica):
 
-## 🌐 Servicios y Puertos
+1.  **Corte**: Desconecta el contenedor de MQTT (`docker stop mosquitto`) o apaga el router WiFi.
+2.  **Acumulación**: El ESP32 mostrará en pantalla "OFFLINE Buff: X".
+3.  **Reconexión**: Restaura el servicio (`docker start mosquitto`).
+4.  **Recuperación**: El ESP32 esperará 30s ("Wait: 30s") y luego enviará todos los datos guardados a alta velocidad.
+5.  **Resultado**: En Grafana, la línea aparecerá continua, rellenando el tiempo que estuvo desconectado.
 
-Una vez arrancado el sistema, puedes acceder a los siguientes servicios:
-
-| Servicio | URL / Puerto | Descripción | Credenciales (Default) |
-| :--- | :--- | :--- | :--- |
-| **Grafana** | [http://localhost:3000](http://localhost:3000) | Panel de control visual | `admin` / `admin` |
-| **Mimir** | Puerto `9009` | Base de datos (API) | - |
-| **Mosquitto**| Puerto `1883` | Broker MQTT (TCP) | - |
-
-## 📦 Configuración ESP32
-
-El código del microcontrolador está en la carpeta `main/`.
-Para compilar:
-1.  Crear `main/secrets.h` con tus credenciales WiFi (ver ejemplo en código).
-2.  Subir usando Arduino IDE o `arduino-cli`.
+---
+*Máster Universitario en Ingeniería de Telecomunicación*
+*Autor: Rafa*
